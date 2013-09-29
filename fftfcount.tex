@@ -1,0 +1,256 @@
+\documentclass{exercise}
+
+\settitle[Experimente mit MATLAB]{Frequenzmessung mittels FFT-Interpolation}
+
+\addstudent{Malte Schmitz}
+\addstudent{\url{m@mlte.de}}
+
+\let\epsilon\varepsilon
+\usepackage{tikz}
+
+\begin{document}
+  \lstset{language=Matlab, numbers=none}
+
+  \task[][Einleitung]
+    Paul, PE1NUT, hat in \cite{paul} vorgestellt, wie mit
+    der Fast Fourier Transformation (FFT) ein Frequenzzähler konstruiert werden kann, der mit hoher Genauigkeit und in kurzer Messzeit die Frequenz mehrerer Signal bestimmen kann. Wir vollziehen hier einen Teil der vorgestellten Mathematik in MATLAB nach.
+
+  \task[][Signalerzeugung]
+    Wir generieren zunächst ein eine Sekunde langes Sinussignal mit 120~Hz und einer Abtastrate von $F_s = $ 1~kHz.
+    \begin{lstlisting}[gobble=6]
+      % Sampling frequency
+      Fs = 1000;
+      % Sample time
+      T = 1/Fs;
+      % Length of signal
+      L = 1000;
+      % Time vector
+      t = (0:L-1)*T;
+      % Create a 120 Hz sinusoid
+      y = sin(2 * pi * 120 * t);
+    \end{lstlisting}
+    Um die Simulation realistischer zu machen, können wir jetzt noch ein weiteres, schwächeres Signal mit 50~Hz oder zufälliges Rauschen hinzufügen.
+    \begin{lstlisting}[gobble=6]
+      % Add a 50 Hz sinusoid
+      y = y + 0.5 * sin(2 * pi * 50 * t);
+      % Add random noise
+      y = y + randn(size(t));
+    \end{lstlisting}
+    Wir verwenden in den folgenden Experimenten allerdings das reine Signal.
+
+  \task[Fast Fourier Transformation][FFT]
+    Bei der Fourier-Transformation wird ein unendlich langes Signal aus dem Zeitbereich in den Frequenzbereich transformiert. Die FFT arbeitet auf diskreten Werten des Signals im Zeitbereich. Man verwendet immer Vielfache von 2 als Länge des Vektors, damit die interne iterierte Halbierung in der FFT gut funktioniert.
+    \begin{lstlisting}[gobble=6]
+      % Next power of 2 from length of y
+      NFFT = 2 .^ nextpow2(L);
+    \end{lstlisting}
+    Da dieser endliche Vektor kein unendlich andauerndes Signal repräsentiert, behandelt die FFT den Vektor als zyklisch. Damit diese Annahme möglichst gut zum tatsächlichen Signal passt, müssen Anfang und Ende des Signals durch eine Fensterfunktion auf 0 gezogen werden. Wir verwenden dazu das klassische Gauß-Fenster, dessen Werte punktweise mit den Werten des Signals multipliziert werden. Das Gauß-Fenster entspricht der Funktion
+    \[ w(x) = \exp\left(-\frac12 x^2\right). \]
+    Da die Fläche unter der Kurve von $w$ gerade $1/2$ entspricht, halbiert sich
+    die Energie des Signals durch Anwendung des Gauß-Fensters mit diesen Parametern. Zum Ausgleich multiplizieren wir das Signal anschließend mit 2.
+    \begin{lstlisting}[gobble=6]
+      % Apply gaussian window function to input signal
+      y = 2 * gausswin(L)' .* y;
+      % Compute FFT and normalize the amplitude to 1
+      Y = fft(y, NFFT) / L;
+    \end{lstlisting}
+
+    Nach dem Abtasttheorem von Shannon und Nyquist können wir bei einer Abtastfrquenz von $F_s$ nur Frequenzen $\le F_s/2$ korrekt abtasten. Die FFT eines realen Signals liefert uns ein symmetrisches Spektrum. Wir betrachten im folgenden das Amplitudenspektrum, also den Betrag der FFT und dieser ist achsensymmetrisch zur Y-Achse.
+    \begin{lstlisting}[gobble=6]
+      % Compute frequency range
+      f = linspace(-Fs / 2, Fs / 2, NFFT);
+    \end{lstlisting}
+
+    Das Spektrum ist zyklisch, der für uns interessante Bereich von $-F_s/2$ bis $F_s/2$ wiederholt sich also unter anderem von $F_s/2$ bis $3F_s/2$. Deshalb liefert die FFT-Funktion von MATLAB uns den Bereich von $0$ bis $F_s$, den wir uns das gesuchte Spektrum umsortieren können.
+    \begin{lstlisting}[gobble=6]
+      % Compute amplitude spectrum -Fs/2..Fs/2
+      % from spectrum 0..Fs/2
+      Yr = zeros(size(Y));
+      Yr(1:NFFT/2) = abs(Y(NFFT/2+1:end));
+      Yr(NFFT/2+1:end) = abs(Y(1:NFFT/2));
+    \end{lstlisting}
+
+    Dieses Spektrum können wir uns jetzt ausgeben lassen.
+    \begin{lstlisting}[gobble=6]
+      % Plot amplitude spectrum
+      plot(f, Yr);
+    \end{lstlisting}
+    
+    Wir benötigen für die Frequenzmessung eines realen Signals allerdings nur den positiven Anteil des Spektrums, deswegen verwenden wir im folgenden ein einseitiges Spektrum.
+    \begin{lstlisting}[gobble=6]
+      % Compute single-sided frequency range
+      f = linspace(0, Fs / 2, NFFT / 2 + 1);
+    
+      % Compute single-sided amplitude spectrum
+      Yr = 2 * abs(Y(1:NFFT / 2 + 1));
+    
+      % Plot single-sided amplitude spectrum
+      plot(f, Yr);
+    \end{lstlisting}
+
+  \task[][naive Frequenzzählung]
+    Wir suchen die Frequenz des stärksten Singals. Das ist gerade die Position im Spektrum mit maximalem Wert.
+    \begin{lstlisting}[gobble=6]
+      % Get the maximum in the spectrum
+      [a, idx] = max(Y);
+      % Compute the max frequency from max index
+      f = Fs * (idx - 1) / NFFT;
+    \end{lstlisting}
+
+    Wenn wir die Eingangsfrequenz von 129 bis 121~kHz variieren, erhalten wir mit dieser Methode die blaue Kurve in \autoref{frq}. Die schwarze Kurve gibt dabei zum Vergleich die auf der X-Achse abgetragene Eingangsfrequenz an. Die Kurve enthält jedes Hz einen Sprung, da unsere FFT eine Auflösung von genau 1~Hz hat, da wir mit einer Abtastrate von $F_s = 1$~kHz arbeiten, das Signal eine Länge von 1000 Werten hat und wir so ein Spektrum bestehend aus 500 Werten von 0 bis 500~Hz erhalten.
+
+    Der Wert des Spektrums am Maximum gibt uns die Amplitude des gemessenen Signals an. Im gleichen Durchgang von 129 bis 121~kHz erhalten wir die blaue Kurve in \autoref{amp}. Die schwarze Kurve gibt hier die theoretische Amplitude von 1 an.
+
+  \task[][quadratische Interpolation]
+    Zur Verbesserung der gemessenen Frequenz wenden wir jetzt die von Paul in aus \cite{marek} übernommene quadratische Interpolation. Wir gehen dabei davon aus, dass die Peaks des Sinus-Signals im Spektrum an der Spitze die Form einer Parabel haben. Betrachten wir jetzt die Werte der FFT an ihrem Maximum und die benachbarten Punkte links und rechts davon, so können wir das ware Maximum durch folgende Gleichung abschätzen.
+    \[ m_{\op{est}} = m + \frac{Y_{m+1} - Y_{m-1}}{2(2Y_m - Y_{m+1} - Y_{m-1})}, \]
+    dabei ist $m$ der Index des Maximums und $Y_i$ der Wert der FFT am Index $i$.
+    \begin{lstlisting}[gobble=6]
+      % Get the maximum in the spectrum
+      [a, idx] = max(Y);
+      % Compute parabolic interpolation
+      left = Y(idx - 1);
+      center = a;
+      right = Y(idx + 1);
+      idx = idx + (right - left) ./ (2 * (2 * center - right - left));
+      % Compute the max frequency from max index
+      f = Fs * (idx - 1) / NFFT;
+    \end{lstlisting}
+
+    Entsprechend können wir auch die Amplitude $a$ des maximalen Signals genauer bestimmen.
+    \[ a = Y_i + \frac{(Y_{i+1} - Y_{i-1})^2}{8(2Y_i - Y_{i+1} - Y_{i-1})} \]
+    \begin{lstlisting}[gobble=6]
+      % Compute parabolic interpolation of amplitude
+      a = center + ((right - left) .^ 2) ./ ...
+          (8 * (2 * center - right - left));
+    \end{lstlisting}
+
+    Mit dieser Technik erhalten wir die grünen Kurven in \autoref{frq} und \autoref{amp}.
+
+  \task[][logarithmisch-quadratische Interpolation]
+    Noch genauere Ergebnisse erhalten wir, wenn wir bei der Interpolation keine Parabel annehmen, sondern die tatsächliche Funktion verwenden. Wir wenden das Gauß-Fenster auf unser Signals vor der FFT an, da eine Gaußglocke durch die FFT erhalten bleibt. Daher wissen wir, dass die Peaks in der FFT die Form einer Gaußschen Glockenkurve haben. Wenn wir auf die Funktion
+    \[ w(x) = \exp\left(-\frac12 x^2\right) \]
+    den Logarithmus anwenden, erhalten wir
+    \[ \ln(w(x)) = -\frac12 x^2, \]
+    sodass wir nun tatsächlich Werte einer quadratischen Funktion haben.
+
+    Wir bestimmen die Frequenz des maximalen Signals nun als
+    \[ m_{\op{est}} = m + \frac{\ln Y_{m+1} - \ln Y_{m-1}}{2(2\ln Y_m - \ln Y_{m+1} - \ln Y_{m-1})}, \]
+    dabei ist $m$ der Index des Maximums und $Y_i$ der Wert der FFT am Index $i$.
+    \begin{lstlisting}[gobble=6]
+      % Get the maximum in the spectrum
+      [a, idx] = max(Y);
+      % Compute parabolic interpolation
+      left = log(Y(idx - 1));
+      center = log(a);
+      right = log(Y(idx + 1));
+      idx = idx + (right - left) ./ (2 * (2 * center - right - left));
+      % Compute the max frequency from max index
+      f = Fs * (idx - 1) / NFFT;
+    \end{lstlisting}
+
+    Entsprechend können wir auch hier die Amplitude $a$ des maximalen Signals genauer bestimmen.
+    \[ a = \exp(\ln Y_i + \frac{(\ln Y_{i+1} - \ln Y_{i-1})^2}{8(2\ln Y_i - \ln Y_{i+1} - \ln Y_{i-1})} \]
+    \begin{lstlisting}[gobble=6]
+      % Compute parabolic interpolation of amplitude
+      a = exp(center + ((right - left) .^ 2) ./ ...
+        (8 * (2 * center - right - left)));
+    \end{lstlisting}
+
+    Mit dieser Technik erhalten wir die magenta Kurven in \autoref{frq} und \autoref{amp}.
+
+  \begin{figure}
+    \includegraphics[width=\textwidth, trim=4cm 2cm 4cm 2cm]{frq.pdf} 
+    \label{frq}
+    \caption{Messung der Frequenz für verschiedene Eingangsfrequenzen}
+  \end{figure}
+
+  \begin{figure}
+    \includegraphics[width=\textwidth, trim=4cm 2cm 4cm 2cm]{amp.pdf}
+    \label{amp}
+    \caption{Messung der Amplitude für verschiedene Eingangsfrequenzen}
+  \end{figure}
+
+  \begin{thebibliography}{22}
+    \bibitem{paul} Pual Boven, PE1NUT: \\
+    \emph{Frequenzmessung mittels FFT-Interpolation}, 58. UKW-Tagung 2013.
+  
+    \bibitem{marek} Marek Gasior: \\
+    \emph{Improving Frequency Resolution of Discrete Spectra}, Dissertation, AGH University of Science and Technology, Krakow, Polen, 2006. \\
+    \url{http://mgasior.web.cern.ch/mgasior/pap/index.html}.
+  \end{thebibliography}
+
+\end{document}
+
+
+  \task[Deep Architectures]
+    Die folgende Matlab-Funktion kann einen Difference-Of-Gaussians-Filter (DOG)
+    auf ein Bild anwenden.
+    \lstinputlisting{dog.m}
+    
+    Die folgende Matlab-Funktion kann DOG iterativ anwenden, bis das Ergebnis
+    konvergiert. Dabei kann eine Nichtlinearität akitiviert werden.
+    \lstinputlisting{itdog.m}
+    
+    Die folgende Matlab-Funktion kann DOG iterativ anwenden und die Schritte
+    plotten.
+    \lstinputlisting{plotitdog.m}
+    
+    Die unten abgebildeten Grafiken wurden mit folgendem Matlab-Script erstellt.
+    \lstinputlisting{aufgabe61.m}
+    
+    \includegraphics[width=\textwidth]{image-linear.pdf}
+    
+    \includegraphics[width=\textwidth]{image-abs.pdf}
+    
+    \includegraphics[width=\textwidth]{image-max.pdf}
+    
+    \includegraphics[width=\textwidth]{image-square.pdf}
+    
+    \includegraphics[width=\textwidth]{camerman-linear.pdf}
+    
+    \includegraphics[width=\textwidth]{camerman-abs.pdf}
+    
+    \includegraphics[width=\textwidth]{camerman-max.pdf}
+    
+    \includegraphics[width=\textwidth]{camerman-square.pdf}
+    
+    Durch Hinzufügen einer starken Nichtlinearität konvergiert die Iteration
+    schneller. Die Detektion von Ecken als Ergebnis einer iterierten
+    Kantendetektion funktioniert ebenfalls mit einer starken Nichtlinarität
+    deutlich besser. Insbesondere durch die Verwendung der Quadrierung
+    entsteht sehr schnell ein sehr spärliches Bild, in dem nur die prägnanten
+    Eckpunkte übrig geblieben sind.
+    
+  \task[Kategoriern für vier Objekte]
+    \begin{itemize}
+      \item Mit vier binären Ziffern können $2^4 = 16$ Kategorien kodiert
+        werden.
+      \item Es ergeben sich die folgenden Kategorien.
+        \begin{align}
+          & 0000, 0001, 0010, 0011, \\
+          & 0100, 0101, 0110, 0111, \\
+          & 1000, 1001, 1010, 1011, \\
+          & 1100, 1101, 1110, 1111
+        \end{align}
+      \item Um die Objekte zu kategorisieren, eignen sich nur diejenigen
+        Kategorien, die einige Objekte enthalten und andere nicht. Mit
+        den Kategorien 0000 und 1111 kommt man nicht weiter, da diese keine
+        bzw. alle Objekte enthalten. Besonders geeignet erscheinen die
+        Kategorien, die genau zwei Objekte enthalten.
+      \item Die Anzahl Kategorien, in denen zwei unterschiedliche Objekte
+        gemeinsam enthalten sind, kann nicht für die Messung der Ähnlichkeit
+        zweier Objekte verwendet werden, da diese Anzahl eine Konstante ist.
+        Für zwei verschiedene Objekte sind gerade zwei Ziffern der Kategorie
+        fest auf 1 gesetzt und zwei weitere Ziffern frei wählbar, sodass
+        jeweils $2^2 = 4$ solche Kategorien existieren.
+        
+        Lässt man die Kategorien 0000 und 1111 aus dieser Betrachtung weg,
+        so erhält man für diese Konstante den Wert 3. Betrachtet man nur
+        Kategorien, die genau zwei Objekte enthalten, so erhält man
+        jeweils genau eine Kategorie, die zwei Objekte gemeinsam haben.
+        Die Anzahl Kategorien, in denen zwei unterschiedliche Objekte
+        gemeinsam enthalten sind, kann also auch auf diese Weise nicht für
+        die Messung der Ähnlichkeit von Objekten verwendet werden.
+    \end{itemize}
+\end{document}
